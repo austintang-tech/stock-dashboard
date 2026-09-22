@@ -1,84 +1,21 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import yfinance as yf
-from datetime import date, timedelta
+
+from common import CATEGORICAL_COLORS, sidebar_tickers, sidebar_period, load_all_history, fetch_dividends
 
 st.set_page_config(page_title="ETF / 股票追蹤儀表板", page_icon="📈", layout="wide")
 
-DEFAULT_TICKERS = ["0050.TW", "0052.TW"]
-CATEGORICAL_COLORS = ["#3B82F6", "#F59E0B", "#10B981", "#8B5CF6", "#EF4444", "#06B6D4"]
-
-PERIOD_OPTIONS = {
-    "近3個月": 90,
-    "近6個月": 180,
-    "近1年": 365,
-    "近3年": 365 * 3,
-    "近5年": 365 * 5,
-}
-
-
-@st.cache_data(ttl=3600)
-def fetch_history(ticker: str, start: date, end: date) -> pd.DataFrame:
-    df = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=False)
-    if df.empty:
-        return df
-    df.index = df.index.tz_localize(None)
-    return df
-
-
-@st.cache_data(ttl=3600)
-def fetch_dividends(ticker: str) -> pd.Series:
-    div = yf.Ticker(ticker).dividends
-    if len(div):
-        div.index = div.index.tz_localize(None)
-    return div
-
-
-@st.cache_data(ttl=3600)
-def fetch_info(ticker: str) -> dict:
-    try:
-        return yf.Ticker(ticker).fast_info
-    except Exception:
-        return {}
-
-
-def stat_tile(col, label, value, delta=None, delta_color="normal"):
-    col.metric(label, value, delta=delta, delta_color=delta_color)
-
-
 st.title("📈 ETF / 股票追蹤儀表板")
 
-with st.sidebar:
-    st.header("設定")
-    tickers_input = st.text_area(
-        "追蹤標的（每行一個，台股請加 .TW，例如 0050.TW）",
-        value="\n".join(DEFAULT_TICKERS),
-        height=100,
-    )
-    tickers = [t.strip().upper() for t in tickers_input.splitlines() if t.strip()]
-
-    period_label = st.selectbox("時間範圍", list(PERIOD_OPTIONS.keys()), index=2)
-    days = PERIOD_OPTIONS[period_label]
-    start_date = date.today() - timedelta(days=days)
-    end_date = date.today() + timedelta(days=1)
-
-    st.caption("資料每小時自動更新一次（快取），來源：Yahoo Finance。")
-    if st.button("立即重新抓取資料"):
-        st.cache_data.clear()
+tickers = sidebar_tickers()
+start_date, end_date = sidebar_period()
 
 if not tickers:
     st.info("請在左側輸入至少一個標的代碼。")
     st.stop()
 
-data = {}
-for t in tickers:
-    hist = fetch_history(t, start_date, end_date)
-    if hist.empty:
-        st.warning(f"抓不到「{t}」的資料，請確認代碼是否正確（台股例如 0050.TW）。")
-        continue
-    data[t] = hist
-
+data = load_all_history(tickers, start_date, end_date)
 if not data:
     st.stop()
 
@@ -89,7 +26,7 @@ for col, (t, hist) in zip(cols, data.items()):
     last_close = hist["Close"].iloc[-1]
     prev_close = hist["Close"].iloc[-2] if len(hist) > 1 else last_close
     change_pct = (last_close / prev_close - 1) * 100 if prev_close else 0
-    stat_tile(col, t, f"{last_close:,.2f}", delta=f"{change_pct:+.2f}%")
+    col.metric(t, f"{last_close:,.2f}", delta=f"{change_pct:+.2f}%")
 
 # --- 走勢比較（指數化到100，避免不同價位無法比較） ---
 st.subheader("走勢比較（以區間起點指數化為 100）")
